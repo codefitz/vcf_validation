@@ -1,41 +1,98 @@
-# VCFv4.2 Validator
-#
-# Author: Wes Moskal-Fitzpatrick
-#
-# This script was built based on schema defined in https://samtools.github.io/hts-specs/VCFv4.2.pdf and assistance
-# from ChatGPT. It is not meant for direct customer use.
-# 
+"""VCFv4.2 Validator.
+
+This module implements a minimal validator for VCF files used at Congenica.  It
+parses a ``.vcf`` or bgzipped ``.vcf.gz`` file and applies a set of structural
+checks based on the VCF specification as well as some Congenica specific rules:
+
+* Contig identifiers must not start with ``"chr"``.
+* Records must contain a ``FORMAT`` column.
+* ``INFO`` must include ``SVTYPE=CNV``.
+* ``ALT`` must be ``<CNV>`` for copy number variants.
+* ``ID`` values must contain ``LOSS`` or ``GAIN``.
+* ``FORMAT`` column must contain ``CN``.
+
+The script exits with ``sys.exit(1)`` on the first validation failure and prints
+an error describing the offending line.
+"""
+
 # Change History
 # 1.0.0 : WMF : Created.
 # 1.0.1 : WMF : Updated with Congenica rules.
 # 1.0.2 : WMF : Added support for bgzipped files. Updated error message for Alternate Alleles.
-#
-# Header line syntax
-# ------------------
-# The header line names the 8 fixed, mandatory columns. These columns are as follows:
-#   1. #CHROM
-#   2. POS
-#   3. ID
-#   4. REF
-#   5. ALT
-#   6. QUAL
-#   7. FILTER
-#   8. INFO
-# If genotype data is present in the file, these are followed by a FORMAT column header, then an arbitrary number
-# of sample IDs. Duplicate sample IDs are not allowed. The header line is tab-delimited.
-#
-# Congenica Strict Rules
-# contig = ID=1-22, ID=chr* - this fails
-# Must have a FORMAT field (9 columns)
-# INFO Must contain SVTYPE=CNV
-# ALT must be <CNV> for CNV types
-# ID must contain "LOSS" or "GAIN"
-# FORMAT field must have "CN"
 
 import sys
 import re
 import gzip
 import argparse
+
+
+def validate_chrom(value: str, line_number: int, line: str) -> None:
+    """Validate the CHROM field."""
+    if not re.match(r"^[0-9A-Za-z_]+$", value):
+        print(f"Error: Invalid chromosome on line {line_number}: {line.strip()}")
+        sys.exit(1)
+
+
+def validate_pos(value: str, line_number: int, line: str) -> None:
+    """Validate the POS field."""
+    if not re.match(r"^[0-9]+$", value):
+        print(f"Error: Invalid position on line {line_number}: {line.strip()}")
+        sys.exit(1)
+
+
+def validate_id(value: str, line_number: int, line: str) -> None:
+    """Validate the ID field."""
+    if not re.match(r"^([A-Za-z0-9:_.]+(;[A-Za-z0-9_.]+)*)?$", value):
+        print(f"Error: Invalid ID on line {line_number}: {line.strip()}")
+        sys.exit(1)
+    if "LOSS" not in value and "GAIN" not in value:
+        print(
+            f"Error: ID field doesn't contain 'LOSS' or 'GAIN' on line {line_number}: {line.strip()}"
+        )
+        sys.exit(1)
+
+
+def validate_ref(value: str, line_number: int, line: str) -> None:
+    """Validate the REF field."""
+    if not re.match(r"^[ACGTN]+$", value):
+        print(f"Error: Invalid reference allele on line {line_number}: {line.strip()}")
+        sys.exit(1)
+
+
+def validate_alt(value: str, line_number: int, line: str) -> None:
+    """Validate the ALT field."""
+    if value != "<CNV>":
+        print(f"Error: Invalid alternate allele on line {line_number}: {line.strip()}")
+        print("ALT must be <CNV> for copy number variants.")
+        sys.exit(1)
+
+
+def validate_qual(value: str, line_number: int, line: str) -> None:
+    """Validate the QUAL field."""
+    if not re.match(r"^[0-9]+(\.[0-9]+)?$", value) and value != ".":
+        print(f"Error: Invalid quality on line {line_number}: {line.strip()}")
+        sys.exit(1)
+
+
+def validate_filter(value: str, line_number: int, line: str) -> None:
+    """Validate the FILTER field."""
+    if not re.match(r"^([A-Za-z0-9_]+(;[A-Za-z0-9_]+)*)?$|^\.$", value):
+        print(f"Error: Invalid filter on line {line_number}: {line.strip()}")
+        sys.exit(1)
+
+
+def validate_info(value: str, line_number: int, line: str) -> None:
+    """Validate the INFO field."""
+    if "SVTYPE=CNV" not in value:
+        print(f"Error: Missing SVTYPE=CNV in INFO field on line {line_number}: {line.strip()}")
+        sys.exit(1)
+
+
+def validate_format(value: str, line_number: int, line: str) -> None:
+    """Validate the FORMAT field."""
+    if "CN" not in value:
+        print(f"Error: Missing 'CN' in FORMAT field on line {line_number}: {line.strip()}")
+        sys.exit(1)
 
 def main():
     parser = argparse.ArgumentParser(description="Validate a VCF file")
@@ -82,72 +139,16 @@ def validate_vcf(vcf_file, strict=False, report=False):
                 if len(fields) < 9:
                     print(f"Error: Incorrect number of columns on line {line_number}: {line.strip()}")
                     sys.exit(1)
-                
-                # CHROM - Chromosome. An identifier from the reference genome or an angle-bracketed ID String (“<ID>”).
-                # String, no whitespace permitted, Required.
-                if not re.match("^[0-9A-Za-z_]+$", fields[0]):
-                    print(f"Error: Invalid chromosome on line {line_number}: {line.strip()}")
-                    sys.exit(1)
 
-                # POS - Position. The reference position, with the 1st base having position 1. Positions are sorted numerically, in increasing order,
-                # within each reference sequence CHROM. Integer, Required.
-                if not re.match("^[0-9]+$", fields[1]):
-                    print(f"Error: Invalid position on line {line_number}: {line.strip()}")
-                    sys.exit(1)
-
-                # ID - Identifier. Semicolon-separated list of unique identifiers where available.
-                # String, no whitespace or semicolons permitted. Missing values denoted by ".".
-                if not re.match("^([A-Za-z0-9:_.]+(;[A-Za-z0-9_.]+)*)?$", fields[2]):
-                    print(f"Error: Invalid ID on line {line_number}: {line.strip()}")
-                    sys.exit(1)
-                # ID field must contain in the string somewhere "LOSS" or "GAIN"
-                if strict and "LOSS" not in fields[2] and "GAIN" not in fields[2]:
-                    print(f"Error: ID field doesn't contain 'LOSS' or 'GAIN' on line {line_number}: {line.strip()}")
-                    sys.exit(1)
-
-                # REF - Reference base(s). Each base must be one of A,C,G,T,N (case insensitive). Multiple bases are permitted.
-                # String, Required.
-                if not re.match("^[ACGTN]+$", fields[3]):
-                    print(f"Error: Invalid reference allele on line {line_number}: {line.strip()}")
-                    sys.exit(1)
-
-                # ALT - Altnerate base(s). Comma-separated list of alternate non-reference alleles.  Strings made up of the bases A,C,G,T,N,*, (case insensitive)
-                # or an angle-bracketed ID String (“<ID>”) or a breakend replacement string. String; no whitespace, commas, or angle-brackets are permitted
-                # in the ID String itself. Missing values denoted by ".".
-                if strict:
-                    if fields[4] != "<CNV>":
-                        print(f"Error: Invalid alternate allele on line {line_number}: {line.strip()}")
-                        print(f"ALT must be \<CNV\> for copy number variants.")
-                        sys.exit(1)
-                else:
-                    if not re.match(r"^([ACGTN]+|<[^>]+>)(,([ACGTN]+|<[^>]+>))*$", fields[4]):
-                        print(f"Error: Invalid alternate allele on line {line_number}: {line.strip()}")
-                        sys.exit(1)
-
-                # QUAL - Quality. Phred-scaled quality score for the assertion made in ALT. Numeric, missing values are denoted by ".".
-                if not re.match("^[0-9]+(\.[0-9]+)?$", fields[5]) and fields[5] != ".":
-                    print(f"Error: Invalid quality on line {line_number}: {line.strip()}")
-                    sys.exit(1)
-
-                # FILTER - Filter status. PASS if this position has passed all filters, i.e., a call is made at this position. Otherwise, if the site has not
-                # passed all filters, a semicolon-separated list of codes for filters that fail. String, no whitespace or semicolons permitted. Missing
-                # values denoted by ".".
-                if not re.match("^([A-Za-z0-9_]+(;[A-Za-z0-9_]+)*)?$|^\\.$", fields[6]):
-                    print(f"Error: Invalid filter on line {line_number}: {line.strip()}")
-                    sys.exit(1)
-
-                # INFO - Additional information. encoded as a semicolon-separated series of short keys with optional values in the format: <key>=<data>[,data].
-                # String, no whitespace, semicolons, or equals-signs permitted; commas are permitted only as delimiters for lists of values). Missing values
-                # are denoted by ".".
-                # INFO field (field 7) must contain SVTYPE=CNV
-                if strict and "SVTYPE=CNV" not in fields[7]:
-                    print(f"Error: Missing SVTYPE=CNV in INFO field on line {line_number}: {line.strip()}")
-                    sys.exit(1)
-
-                # FORMAT field (field 8) must contain "CN"
-                if strict and "CN" not in fields[8]:
-                    print(f"Error: Missing 'CN' in FORMAT field on line {line_number}: {line.strip()}")
-                    sys.exit(1)
+                validate_chrom(fields[0], line_number, line)
+                validate_pos(fields[1], line_number, line)
+                validate_id(fields[2], line_number, line)
+                validate_ref(fields[3], line_number, line)
+                validate_alt(fields[4], line_number, line)
+                validate_qual(fields[5], line_number, line)
+                validate_filter(fields[6], line_number, line)
+                validate_info(fields[7], line_number, line)
+                validate_format(fields[8], line_number, line)
 
     if report:
         print("VCF file validation completed. No structural errors found.")
