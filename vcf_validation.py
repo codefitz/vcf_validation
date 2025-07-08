@@ -35,16 +35,21 @@
 import sys
 import re
 import gzip
+import argparse
 
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: python vcf_validation.py <*.vcf|*.gz>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Validate a VCF file")
+    parser.add_argument("vcf_file", help="Path to VCF or bgzipped file")
+    parser.add_argument("--strict", action="store_true",
+                        help="Enable Congenica strict rule checks")
+    parser.add_argument("--report", action="store_true",
+                        help="Print a summary report when validation completes")
 
-    vcf_file = sys.argv[1]
-    validate_vcf(vcf_file)
+    args = parser.parse_args()
 
-def validate_vcf(vcf_file):
+    validate_vcf(args.vcf_file, strict=args.strict, report=args.report)
+
+def validate_vcf(vcf_file, strict=False, report=False):
     if vcf_file.endswith('.vcf'):
         open_func = open
     elif vcf_file.endswith('.gz'):
@@ -60,7 +65,7 @@ def validate_vcf(vcf_file):
         for line in file:
             line_number += 1
             if line.startswith("##"):
-                if line.startswith("##contig"):
+                if strict and line.startswith("##contig"):
                     contig_info = line.split('<',1)[1].split('>')[0]
                     id_info = [x for x in contig_info.split(',') if x.startswith('ID=')]
                     if id_info:
@@ -96,7 +101,7 @@ def validate_vcf(vcf_file):
                     print(f"Error: Invalid ID on line {line_number}: {line.strip()}")
                     sys.exit(1)
                 # ID field must contain in the string somewhere "LOSS" or "GAIN"
-                if "LOSS" not in fields[2] and "GAIN" not in fields[2]:
+                if strict and "LOSS" not in fields[2] and "GAIN" not in fields[2]:
                     print(f"Error: ID field doesn't contain 'LOSS' or 'GAIN' on line {line_number}: {line.strip()}")
                     sys.exit(1)
 
@@ -109,11 +114,15 @@ def validate_vcf(vcf_file):
                 # ALT - Altnerate base(s). Comma-separated list of alternate non-reference alleles.  Strings made up of the bases A,C,G,T,N,*, (case insensitive)
                 # or an angle-bracketed ID String (“<ID>”) or a breakend replacement string. String; no whitespace, commas, or angle-brackets are permitted
                 # in the ID String itself. Missing values denoted by ".".
-                if fields[4] != "<CNV>":
-                #if not re.match("^([ACGTN]+|<[^>]+>)(,([ACGTN]+|<[^>]+>))*$", fields[4]):
-                    print(f"Error: Invalid alternate allele on line {line_number}: {line.strip()}")
-                    print(f"ALT must be \<CNV\> for copy number variants.")
-                    sys.exit(1)
+                if strict:
+                    if fields[4] != "<CNV>":
+                        print(f"Error: Invalid alternate allele on line {line_number}: {line.strip()}")
+                        print(f"ALT must be \<CNV\> for copy number variants.")
+                        sys.exit(1)
+                else:
+                    if not re.match(r"^([ACGTN]+|<[^>]+>)(,([ACGTN]+|<[^>]+>))*$", fields[4]):
+                        print(f"Error: Invalid alternate allele on line {line_number}: {line.strip()}")
+                        sys.exit(1)
 
                 # QUAL - Quality. Phred-scaled quality score for the assertion made in ALT. Numeric, missing values are denoted by ".".
                 if not re.match("^[0-9]+(\.[0-9]+)?$", fields[5]) and fields[5] != ".":
@@ -131,16 +140,17 @@ def validate_vcf(vcf_file):
                 # String, no whitespace, semicolons, or equals-signs permitted; commas are permitted only as delimiters for lists of values). Missing values
                 # are denoted by ".".
                 # INFO field (field 7) must contain SVTYPE=CNV
-                if "SVTYPE=CNV" not in fields[7]:
+                if strict and "SVTYPE=CNV" not in fields[7]:
                     print(f"Error: Missing SVTYPE=CNV in INFO field on line {line_number}: {line.strip()}")
                     sys.exit(1)
 
                 # FORMAT field (field 8) must contain "CN"
-                if "CN" not in fields[8]:
+                if strict and "CN" not in fields[8]:
                     print(f"Error: Missing 'CN' in FORMAT field on line {line_number}: {line.strip()}")
                     sys.exit(1)
 
-    print("VCF file validation completed. No structural errors found.")
+    if report:
+        print("VCF file validation completed. No structural errors found.")
 
 if __name__ == "__main__":
     main()
