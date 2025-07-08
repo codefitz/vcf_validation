@@ -9,6 +9,7 @@
 # 1.0.0 : WMF : Created.
 # 1.0.1 : WMF : Updated with Congenica rules.
 # 1.0.2 : WMF : Added support for bgzipped files. Updated error message for Alternate Alleles.
+# 1.0.3 : WMF : Added header validations and duplicate sample detection.
 #
 # Header line syntax
 # ------------------
@@ -55,13 +56,15 @@ def validate_vcf(vcf_file):
         sys.exit(1)
     
     with open_func(vcf_file, 'rt') as file:
-        ...
 
         line_number = 0
+        fileformat_found = False
         header_found = False
         for line in file:
             line_number += 1
             if line.startswith("##"):
+                if line.startswith("##fileformat"):
+                    fileformat_found = True
                 if line.startswith("##contig"):
                     contig_info = line.split('<',1)[1].split('>')[0]
                     id_info = [x for x in contig_info.split(',') if x.startswith('ID=')]
@@ -70,12 +73,19 @@ def validate_vcf(vcf_file):
                         if contig_id.startswith("chr"):
                             print(f"Error: Contig ID starts with 'chr' on line {line_number}: {line.strip()}")
                             sys.exit(1)
-                            
-                if not header_found:
-                    header_found = True
                 continue
             elif line.startswith("#CHROM"):
-                header_found = False
+                header_found = True
+                header_fields = line.strip().split('\t')
+                if len(header_fields) > 8 and header_fields[8] != "FORMAT":
+                    print("Error: FORMAT column missing from header line")
+                    sys.exit(1)
+                if len(header_fields) > 9:
+                    sample_names = header_fields[9:]
+                    if len(sample_names) != len(set(sample_names)):
+                        print("Error: Duplicate sample names in header line")
+                        sys.exit(1)
+                continue
             else:
                 fields = line.strip().split('\t')
                 if len(fields) < 9:
@@ -143,6 +153,13 @@ def validate_vcf(vcf_file):
                 if "CN" not in fields[8]:
                     print(f"Error: Missing 'CN' in FORMAT field on line {line_number}: {line.strip()}")
                     sys.exit(1)
+
+        if not fileformat_found:
+            print("Error: Missing ##fileformat header")
+            sys.exit(1)
+        if not header_found:
+            print("Error: Missing #CHROM header line")
+            sys.exit(1)
 
     print("VCF file validation completed. No structural errors found.")
 
