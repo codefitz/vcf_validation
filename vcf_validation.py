@@ -19,6 +19,29 @@ an error describing the offending line.
 # 1.0.0 : WMF : Created.
 # 1.0.1 : WMF : Updated with Congenica rules.
 # 1.0.2 : WMF : Added support for bgzipped files. Updated error message for Alternate Alleles.
+# 1.0.3 : WMF : Added header validations and duplicate sample detection.
+#
+# Header line syntax
+# ------------------
+# The header line names the 8 fixed, mandatory columns. These columns are as follows:
+#   1. #CHROM
+#   2. POS
+#   3. ID
+#   4. REF
+#   5. ALT
+#   6. QUAL
+#   7. FILTER
+#   8. INFO
+# If genotype data is present in the file, these are followed by a FORMAT column header, then an arbitrary number
+# of sample IDs. Duplicate sample IDs are not allowed. The header line is tab-delimited.
+#
+# Congenica Strict Rules
+# contig = ID=1-22, ID=chr* - this fails
+# Must have a FORMAT field (9 columns)
+# INFO Must contain SVTYPE=CNV
+# ALT must be <CNV> for CNV types
+# ID must contain "LOSS" or "GAIN"
+# FORMAT field must have "CN"
 
 import sys
 import re
@@ -119,10 +142,14 @@ def validate_vcf(vcf_file, strict=False, report=False):
     with open_func(vcf_file, 'rt') as file:
 
         line_number = 0
+        fileformat_found = False
+        header_found = False
         for line in file:
             line_number += 1
             if line.startswith("##"):
-                if strict and line.startswith("##contig"):
+                if line.startswith("##fileformat"):
+                    fileformat_found = True
+                if line.startswith("##contig"):
                     contig_info = line.split('<',1)[1].split('>')[0]
                     id_info = [x for x in contig_info.split(',') if x.startswith('ID=')]
                     if id_info:
@@ -130,9 +157,18 @@ def validate_vcf(vcf_file, strict=False, report=False):
                         if contig_id.startswith("chr"):
                             print(f"Error: Contig ID starts with 'chr' on line {line_number}: {line.strip()}")
                             sys.exit(1)
-                            
                 continue
             elif line.startswith("#CHROM"):
+                header_found = True
+                header_fields = line.strip().split('\t')
+                if len(header_fields) > 8 and header_fields[8] != "FORMAT":
+                    print("Error: FORMAT column missing from header line")
+                    sys.exit(1)
+                if len(header_fields) > 9:
+                    sample_names = header_fields[9:]
+                    if len(sample_names) != len(set(sample_names)):
+                        print("Error: Duplicate sample names in header line")
+                        sys.exit(1)
                 continue
             else:
                 fields = line.strip().split('\t')
@@ -149,6 +185,13 @@ def validate_vcf(vcf_file, strict=False, report=False):
                 validate_filter(fields[6], line_number, line)
                 validate_info(fields[7], line_number, line)
                 validate_format(fields[8], line_number, line)
+
+        if not fileformat_found:
+            print("Error: Missing ##fileformat header")
+            sys.exit(1)
+        if not header_found:
+            print("Error: Missing #CHROM header line")
+            sys.exit(1)
 
     if report:
         print("VCF file validation completed. No structural errors found.")
