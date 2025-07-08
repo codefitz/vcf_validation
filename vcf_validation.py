@@ -23,6 +23,7 @@ an error describing the offending line.
 import sys
 import re
 import gzip
+import argparse
 
 
 def validate_chrom(value: str, line_number: int, line: str) -> None:
@@ -94,16 +95,18 @@ def validate_format(value: str, line_number: int, line: str) -> None:
         sys.exit(1)
 
 def main():
-    """Entry point for command line execution."""
-    if len(sys.argv) != 2:
-        print("Usage: python vcf_validation.py <*.vcf|*.gz>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Validate a VCF file")
+    parser.add_argument("vcf_file", help="Path to VCF or bgzipped file")
+    parser.add_argument("--strict", action="store_true",
+                        help="Enable Congenica strict rule checks")
+    parser.add_argument("--report", action="store_true",
+                        help="Print a summary report when validation completes")
 
-    vcf_file = sys.argv[1]
-    validate_vcf(vcf_file)
+    args = parser.parse_args()
 
-def validate_vcf(vcf_file: str) -> None:
-    """Validate ``vcf_file`` using the Congenica rules."""
+    validate_vcf(args.vcf_file, strict=args.strict, report=args.report)
+
+def validate_vcf(vcf_file, strict=False, report=False):
     if vcf_file.endswith('.vcf'):
         open_func = open
     elif vcf_file.endswith('.gz'):
@@ -114,14 +117,12 @@ def validate_vcf(vcf_file: str) -> None:
         sys.exit(1)
     
     with open_func(vcf_file, 'rt') as file:
-        ...
 
         line_number = 0
-        header_found = False
         for line in file:
             line_number += 1
             if line.startswith("##"):
-                if line.startswith("##contig"):
+                if strict and line.startswith("##contig"):
                     contig_info = line.split('<',1)[1].split('>')[0]
                     id_info = [x for x in contig_info.split(',') if x.startswith('ID=')]
                     if id_info:
@@ -130,11 +131,9 @@ def validate_vcf(vcf_file: str) -> None:
                             print(f"Error: Contig ID starts with 'chr' on line {line_number}: {line.strip()}")
                             sys.exit(1)
                             
-                if not header_found:
-                    header_found = True
                 continue
             elif line.startswith("#CHROM"):
-                header_found = False
+                continue
             else:
                 fields = line.strip().split('\t')
                 if len(fields) < 9:
@@ -151,7 +150,8 @@ def validate_vcf(vcf_file: str) -> None:
                 validate_info(fields[7], line_number, line)
                 validate_format(fields[8], line_number, line)
 
-    print("VCF file validation completed. No structural errors found.")
+    if report:
+        print("VCF file validation completed. No structural errors found.")
 
 if __name__ == "__main__":
     main()
