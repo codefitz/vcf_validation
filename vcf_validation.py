@@ -55,10 +55,8 @@ def validate_vcf(vcf_file):
         sys.exit(1)
     
     with open_func(vcf_file, 'rt') as file:
-        ...
 
         line_number = 0
-        header_found = False
         for line in file:
             line_number += 1
             if line.startswith("##"):
@@ -71,11 +69,9 @@ def validate_vcf(vcf_file):
                             print(f"Error: Contig ID starts with 'chr' on line {line_number}: {line.strip()}")
                             sys.exit(1)
                             
-                if not header_found:
-                    header_found = True
                 continue
             elif line.startswith("#CHROM"):
-                header_found = False
+                continue
             else:
                 fields = line.strip().split('\t')
                 if len(fields) < 9:
