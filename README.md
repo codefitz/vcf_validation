@@ -37,3 +37,17 @@ Test files obtained from NIH and are publicly available.
 Script accepts a VCF file or a compressed bgzipped file. You need python 3.6+ installed.
 
 `python vcf_validation.py <*.vcf|*.gz>`
+## Testing
+
+Install the development requirements with:
+
+```
+pip install -r requirements-dev.txt
+```
+
+Run the linter and unit tests using:
+
+```
+flake8
+pytest
+```
